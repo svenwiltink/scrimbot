@@ -7,7 +7,8 @@ type Database interface {
 
 	CreateEvent(GuildID string) (*Event, error)
 	SaveParticipation(Event *Event, Participant *Participant) error
-	SaveMessage(Message *Message)
+	SaveMessage(GuildID string, Message *Message) error
+	SaveEvent(Event *Event) error
 }
 
 var database Database

@@ -42,7 +42,7 @@ func (db *Database) GetEventByMessage(GuildID string, ChannelID string, MessageI
 			return errors.New("could not get event by message")
 		}
 
-		messageStruct := scrimpost.Message{}
+		messageStruct := &scrimpost.Message{}
 		err = json.Unmarshal(message, messageStruct)
 
 		if err != nil {
@@ -58,19 +58,168 @@ func (db *Database) GetEventByMessage(GuildID string, ChannelID string, MessageI
 		return nil
 	})
 
+	event.GuildID = GuildID
+
 	return event, err
 }
 
 func (db *Database) CreateEvent(GuildID string) (*scrimpost.Event, error) {
-	panic("implement me")
+	event := &scrimpost.Event{}
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		guilds := tx.Bucket([]byte("guilds"))
+		if guilds == nil {
+			return errors.New("unable to get guilds bucket")
+		}
+
+		guild, err := guilds.CreateBucketIfNotExists([]byte(GuildID))
+		if err != nil {
+			return err
+		}
+
+		events, err := guild.CreateBucketIfNotExists([]byte("events"))
+		if err != nil {
+			return err
+		}
+
+		// get the next eventID and set it in the message
+		nextEventId, _ := events.NextSequence()
+		event.ID = int(nextEventId)
+
+		saveEvent(event, events)
+
+		return nil
+	})
+
+	return event, err
+}
+
+func (db *Database) SaveEvent(Event *scrimpost.Event) error {
+	//event := &scrimpost.Event{}
+	err := db.db.Update(func(tx *bolt.Tx) error {
+		guilds := tx.Bucket([]byte("guilds"))
+		if guilds == nil {
+			return errors.New("unable to get guilds bucket")
+		}
+
+		guild, err := guilds.CreateBucketIfNotExists([]byte(Event.GuildID))
+		if err != nil {
+			return err
+		}
+
+		events, err := guild.CreateBucketIfNotExists([]byte("events"))
+		if err != nil {
+			return err
+		}
+
+		saveEvent(Event, events)
+
+		return nil
+	})
+
+	return err
+}
+
+func saveEvent(event *scrimpost.Event, eventsbucket *bolt.Bucket) error {
+	eventBucket, err := eventsbucket.CreateBucketIfNotExists(util.Itob(event.ID))
+
+	eventParticipants := event.Participants
+	event.Participants = nil
+
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+
+	if err = eventBucket.Put([]byte("data"), eventBytes); err != nil {
+		return err
+	}
+
+	participants, err := eventBucket.CreateBucketIfNotExists([]byte("participants"))
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	for _, participant := range eventParticipants {
+		participantBytes, err := json.Marshal(participant)
+		if err != nil {
+			return err
+		}
+
+		if err = participants.Put([]byte(participant.ID), participantBytes); err != nil {
+			return err
+		}
+
+	}
+
+	return nil
 }
 
 func (db *Database) SaveParticipation(Event *scrimpost.Event, Participant *scrimpost.Participant) error {
-	panic("implement me")
+	return db.db.Update(func(tx *bolt.Tx) error {
+		guilds := tx.Bucket([]byte("guilds"))
+		if guilds == nil {
+			return errors.New("unable to get guilds bucket")
+		}
+
+		guild, err := guilds.CreateBucketIfNotExists([]byte(Event.GuildID))
+		if err != nil {
+			return err
+		}
+
+		eventsBucket, err := guild.CreateBucketIfNotExists([]byte("events"))
+		if err != nil {
+			return err
+		}
+
+		eventBucket, err := eventsBucket.CreateBucketIfNotExists(util.Itob(Event.ID))
+		participants, err := eventBucket.CreateBucketIfNotExists([]byte("participants"))
+		if err != nil {
+			return err
+		}
+
+		participantBytes, err := json.Marshal(Participant)
+		if err != nil {
+			return err
+		}
+
+		if err = participants.Put([]byte(Participant.ID), participantBytes); err != nil {
+			return err
+		}
+
+		return nil
+	})
 }
 
-func (db *Database) SaveMessage(Message *scrimpost.Message) {
-	panic("implement me")
+func (db *Database) SaveMessage(GuildID string, Message *scrimpost.Message) error {
+	return db.db.Update(func(tx *bolt.Tx) error {
+		guilds := tx.Bucket([]byte("guilds"))
+		if guilds == nil {
+			return errors.New("unable to get guilds bucket")
+		}
+
+		guild, err := guilds.CreateBucketIfNotExists([]byte(GuildID))
+		if err != nil {
+			return err
+		}
+
+		messages, err := guild.CreateBucketIfNotExists([]byte("messages"))
+		if err != nil {
+			return err
+		}
+
+		messageBytes, err := json.Marshal(Message)
+		if err != nil {
+			return err
+		}
+
+		if err = messages.Put([]byte(Message.ChannelID+"+"+Message.ID), messageBytes); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
 }
 
 func Load(path string) (*Database, error) {
@@ -110,7 +259,7 @@ func getGuildBucket(tx *bolt.Tx, GuildID string) (*bolt.Bucket, error) {
 
 	bucket := guilds.Bucket([]byte(GuildID))
 	if bucket == nil {
-		return nil, errors.New("unable to get bucket for messages")
+		return nil, errors.New("unable to get bucket for guild")
 	}
 
 	return bucket, nil

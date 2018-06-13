@@ -26,7 +26,6 @@ func (bot *ScrimBot) Start() error {
 
 	bot.discordSession = discord
 
-	bot.discordSession.AddHandler(bot.handleGuildCreate)
 	bot.discordSession.AddHandler(bot.handleMessageCreate)
 	bot.discordSession.AddHandler(bot.handleReactionAdd)
 
@@ -52,19 +51,30 @@ func (bot *ScrimBot) handleMessageCreate(session *discordgo.Session, message *di
 			return
 		}
 
-		//post := scrimpost.Create(channel.GuildID, channel.ID)
-		message, err := session.ChannelMessageSend(channel.ID, "fuck yea bitches")
+		event, err := scrimpost.CreateEvent(channel.GuildID)
 
 		if err != nil {
 			log.Println(err)
 			return
 		}
 
-		//post.MessageID = message.ID
-		//err = bot.scrimposts.Put(post)
-		//if err != nil {
-		//	log.Println(err)
-		//}
+		message, err := session.ChannelMessageSendEmbed(channel.ID, event.CreateDiscordEmbed())
+
+		err = scrimpost.SaveMessage(channel.GuildID, channel.ID, message.ID, event)
+		if err != nil {
+			log.Printf("error saving message: %v", err)
+			return
+		}
+
+		// update event
+		event.MessageID = message.ID
+		event.GuildID = channel.GuildID
+
+		err = scrimpost.SaveEvent(event)
+		if err != nil {
+			log.Printf("error saving event: %v", err)
+			return
+		}
 
 		session.MessageReactionAdd(message.ChannelID, message.ID, scrimpost.YeaResponse.ToApiName())
 		session.MessageReactionAdd(message.ChannelID, message.ID, scrimpost.NayResponse.ToApiName())
@@ -97,33 +107,21 @@ func (bot *ScrimBot) handleReactionAdd(session *discordgo.Session, event *discor
 
 	post, err := scrimpost.FromMessage(channel.GuildID, channel.ID, message.ID)
 	if err != nil {
-		log.Println(err)
+		log.Printf("could not get scrimpost from message: %s", err)
 	}
-	log.Println(post)
-	//
-	//post, err := scrimpost.FromMessage(channel.GuildID, message)
-	//
-	//if err != nil {
-	//	log.Println(err)
-	//	return
-	//}
-	//
-	//shouldUpdate, err := post.HandleReaction(session, event)
-	//if err != nil {
-	//	log.Println(err)
-	//	return
-	//}
-	//
-	//if shouldUpdate {
-	//	session.ChannelMessageEditEmbed(message.ChannelID, message.ID, post.CreateEmbed())
-	//	bot.scrimposts.Put(post)
-	//}
-	//
-	//session.MessageReactionRemove(message.ChannelID, message.ID, event.Emoji.APIName(), event.UserID)
-}
 
-func (bot *ScrimBot) handleGuildCreate(session *discordgo.Session, create *discordgo.GuildCreate) {
-	//bot.scrimposts.LoadEntriesForGuild(create.Guild.ID)
+	user, err := session.User(event.UserID)
+	if err != nil {
+		log.Printf("Could not get user: %v", err)
+		return
+	}
+
+	shouldUpdate, err := post.HandleReaction(user.Mention(), scrimpost.ScrimResponseFromEmoji(event.Emoji))
+	if shouldUpdate {
+		session.ChannelMessageEditEmbed(message.ChannelID, message.ID, post.CreateDiscordEmbed())
+	}
+
+	session.MessageReactionRemove(message.ChannelID, message.ID, event.Emoji.APIName(), event.UserID)
 }
 
 func (bot *ScrimBot) Close() {
